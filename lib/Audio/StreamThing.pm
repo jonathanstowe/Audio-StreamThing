@@ -21,9 +21,32 @@ class Audio::StreamThing {
         return -1;
     }
 
+    class Connection {
+        has %.environment is required;
+        has Blob $.remaining-data;
 
-    method !handle-connection(IO::Socket::Async $conn) {
-        say "got connection";
+        method is-source() returns Bool {
+            self.request-method eq 'SOURCE';
+        }
+
+        method is-client() returns Bool {
+            self.request-method eq 'GET'; 
+        }
+
+        method request-method() returns Str {
+            %!environment<REQUEST_METHOD>
+        }
+
+        method uri() returns Str {
+            %!environment<REQUEST_URI>;
+        }
+    }
+
+    class X::BadHeader is Exception {
+        has $.message = "incomplete or malformed header in client request";
+    }
+
+    method !new-connection(IO::Socket::Async $conn) returns Promise {
         my Buf $in-buf = Buf.new;
         my $header-promise = Promise.new;
         my $in-supply = $conn.Supply(:bin);
@@ -31,18 +54,28 @@ class Audio::StreamThing {
             $in-buf ~= $buf;
             if (my $header-end = index-buf($in-buf, Buf.new(13,10,13,10))) > 0 {
                 my $header = $in-buf.subbuf(0, $header-end + 4);
-                my $env = parse-http-request($header); #Hash;
-                $env[1]<remaining-data> = $in-buf.subbuf($header-end + 4);
-                $header-promise.keep: $env;
+                my $env = parse-http-request($header);
+                $tap.close;
+                if $env[0] >= 0 {
+                    my $remaining-data = $in-buf.subbuf($header-end + 4);
+                    $header-promise.keep: Connection.new(environment => $env[1], :$remaining-data);
+                }
+                else {
+                    X::BadHeader.new.throw;
+                }
             }
         });
-        my $header = $header-promise.result;
-        $tap.close;
+        $header-promise;
+    }
+
+    method !handle-connection(IO::Socket::Async $conn) {
+        say "got connection";
+        my $header = self!new-connection($conn).result;
         say $header.perl;
-        if $header[1]<REQUEST_METHOD> eq 'SOURCE' {
+        if $header.is-source {
             say "this is a source client";
             my $supplier = Supplier.new;
-            my $m = $header[1]<REQUEST_URI>;
+            my $m = $header.uri;
             %!mounts{$m} = $supplier.Supply;
             my $stream-supply = $conn.Supply(:bin);
             $stream-supply.tap(-> $buf {
@@ -50,8 +83,8 @@ class Audio::StreamThing {
             }, done => { say "source ending"; %!mounts{$m}:delete });
             await $conn.write: "HTTP/1.0 200 OK\r\n\r\n".encode;
         }
-        elsif $header[1]<REQUEST_METHOD> eq 'GET' {
-            my $m = $header[1]<REQUEST_URI>;
+        elsif $header.is-client {
+            my $m = $header.uri;
             if %!mounts{$m}:exists {
                 my $h = HTTP::Header.new(Content-Type => 'audio/mpeg', Pragma => 'no-cache', icy-name => 'foo');
                 my $conn-promise = Promise.new;
