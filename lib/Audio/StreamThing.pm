@@ -21,9 +21,10 @@ class Audio::StreamThing {
         return -1;
     }
 
-    class Connection {
+    class ClientConnection {
         has %.environment is required;
         has Blob $.remaining-data;
+        has IO::Socket::Async $.connection;
 
         method is-source() returns Bool {
             self.request-method eq 'SOURCE';
@@ -40,10 +41,36 @@ class Audio::StreamThing {
         method uri() returns Str {
             %!environment<REQUEST_URI>;
         }
+
+        method content-type() returns Str {
+            %!environment<CONTENT_TYPE>;
+        }
+
+        multi method send-response(Int $code, Str $body = '', *%headers) {
+
+        }
+
+        proto method write(|c) { * }
+
+        multi method write(Blob $buf) returns Promise {
+            $!connection.write($buf);
+        }
     }
 
     class X::BadHeader is Exception {
         has $.message = "incomplete or malformed header in client request";
+    }
+
+    class Source {
+        has Supplier $.supplier = Supplier.new;
+        has Supply   $.supply   = $!supplier.Supply;
+        has Str      $.content-type;
+
+    }
+
+    class Mount {
+        has Str    $.name;
+        has Source $.source handles <supply content-type>;
     }
 
     method !new-connection(IO::Socket::Async $conn) returns Promise {
@@ -58,7 +85,7 @@ class Audio::StreamThing {
                 $tap.close;
                 if $env[0] >= 0 {
                     my $remaining-data = $in-buf.subbuf($header-end + 4);
-                    $header-promise.keep: Connection.new(environment => $env[1], :$remaining-data);
+                    $header-promise.keep: ClientConnection.new(environment => $env[1], :$remaining-data, connection => $conn);
                 }
                 else {
                     X::BadHeader.new.throw;
@@ -70,12 +97,13 @@ class Audio::StreamThing {
 
     method !handle-connection(IO::Socket::Async $conn) {
         say "got connection";
-        my $header = self!new-connection($conn).result;
-        say $header.perl;
-        if $header.is-source {
+        my $client = self!new-connection($conn).result;
+        say $client.perl;
+        if $client.is-source {
+            # TODO check authentication, refuse connect if the mount is in use
             say "this is a source client";
             my $supplier = Supplier.new;
-            my $m = $header.uri;
+            my $m = $client.uri;
             %!mounts{$m} = $supplier.Supply;
             my $stream-supply = $conn.Supply(:bin);
             $stream-supply.tap(-> $buf {
@@ -83,9 +111,10 @@ class Audio::StreamThing {
             }, done => { say "source ending"; %!mounts{$m}:delete });
             await $conn.write: "HTTP/1.0 200 OK\r\n\r\n".encode;
         }
-        elsif $header.is-client {
-            my $m = $header.uri;
+        elsif $client.is-client {
+            my $m = $client.uri;
             if %!mounts{$m}:exists {
+                # TODO use the content type and icy-name from the source
                 my $h = HTTP::Header.new(Content-Type => 'audio/mpeg', Pragma => 'no-cache', icy-name => 'foo');
                 my $conn-promise = Promise.new;
                 $conn.Supply(:bin).tap({ say "unexpected content"}, done => { $conn-promise.keep: "done" }, quit => { say "quit" }, closing => { say "closing" });
@@ -103,6 +132,11 @@ class Audio::StreamThing {
                 await $conn.write( ("HTTP/1.0 404 Not Found\r\n\r\n").encode);
                 $conn.close;
             }
+        }
+        else {
+            my $h = HTTP::Header.new(Content-Type => 'text/plain', Allow => 'SOURCE, GET');
+            await $conn.write( ("HTTP/1.0 405 Method not allowed\r\n" ~ $h.Str ~ "\r\n\r\n").encode);
+            $conn.close;
         }
     }
 
