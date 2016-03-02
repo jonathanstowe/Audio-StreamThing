@@ -2,13 +2,22 @@ use v6;
 
 use HTTP::Parser;
 use HTTP::Header;
+use HTTP::Status;
 
 class Audio::StreamThing {
 
+    has Bool $.debug;
     has Int $.port is required;
+    has Str $.host = '0.0.0.0';
 
     has %!mounts;
     has Supply $!connection-supply;
+
+    has Supplier $!mount-create = Supplier.new;
+    has Supply   $.mount-create-supply = $!mount-create.Supply;
+
+    has Supplier $!mount-delete = Supplier.new;
+    has Supply   $.mount-delete-supply = $!mount-delete.Supply;
 
     sub index-buf(Blob $input, Blob $sub) returns Int {
         my $end-pos = 0;
@@ -24,7 +33,7 @@ class Audio::StreamThing {
     class ClientConnection {
         has %.environment is required;
         has Blob $.remaining-data;
-        has IO::Socket::Async $.connection;
+        has IO::Socket::Async $.connection is required handles <Supply>;
 
         method is-source() returns Bool {
             self.request-method eq 'SOURCE';
@@ -47,7 +56,10 @@ class Audio::StreamThing {
         }
 
         multi method send-response(Int $code, Str $body = '', *%headers) {
-
+            my $h = HTTP::Header.new(|%headers);
+            my $msg = get_http_status_msg($code);
+            my $out = "HTTP/1.0 $code $msg\r\n$h\r\n$body".encode;
+            self.write($out);
         }
 
         proto method write(|c) { * }
@@ -55,31 +67,87 @@ class Audio::StreamThing {
         multi method write(Blob $buf) returns Promise {
             $!connection.write($buf);
         }
+
+        method close() {
+            $!connection.close;
+        }
     }
 
     class X::BadHeader is Exception {
         has $.message = "incomplete or malformed header in client request";
     }
 
-    class Source {
-        has Supplier $.supplier = Supplier.new;
-        has Supply   $.supply   = $!supplier.Supply;
+    role Source {
+        has Bool     $.debug;
+        has Supplier $.supplier         = Supplier.new;
+        has Supply   $.supply           = $!supplier.Supply;
+        has Promise  $.finished-promise = Promise.new;
         has Str      $.content-type;
+        has Int      $.bytes-sent       = 0;
+
+        method start() {
+            ...
+        }
 
     }
+
+    class ClientSource does Source {
+        has ClientConnection $.connection is required handles <uri content-type>;
+        method start() {
+            self!debug("source starting");
+            my $stream-supply = $!connection.Supply(:bin);
+            my &done = sub {
+                self!debug("source ending");
+                $!finished-promise.keep: "source ending";
+            }
+            $stream-supply.tap(-> $buf {
+                $!bytes-sent += $buf.elems;
+                $!supplier.emit($buf);
+            }, :&done );
+            await $!connection.send-response(200);
+        }
+        method !debug(*@message) {
+            $*ERR.say('[',DateTime.now,'][DEBUG] ', @message) if $!debug;
+        }
+    }
+
+    
 
     class Mount {
         has Str    $.name;
-        has Source $.source handles <supply content-type>;
+        has Source $.source handles <supply content-type bytes-sent>;
+
+        method finished-promise() returns Promise {
+            my $p = Promise.new;
+            my $v = $p.vow;
+            $.source.finished-promise.then({ $v.keep: "source closed" });
+            $p;
+        }
+
+        method start() {
+            $!source.start;
+        }
+
+
     }
 
+    method !debug(*@message) {
+        $*ERR.say('[',DateTime.now,'][DEBUG] ', @message) if $!debug;
+    }
+
+
     method !new-connection(IO::Socket::Async $conn) returns Promise {
+        self!debug( "new connection");
         my Buf $in-buf = Buf.new;
         my $header-promise = Promise.new;
+        self!debug("got promise");
         my $in-supply = $conn.Supply(:bin);
+        self!debug("got supply");
         my $tap = $in-supply.act( -> $buf { 
+            self!debug("got stuff");
             $in-buf ~= $buf;
             if (my $header-end = index-buf($in-buf, Buf.new(13,10,13,10))) > 0 {
+                self!debug("got header");
                 my $header = $in-buf.subbuf(0, $header-end + 4);
                 my $env = parse-http-request($header);
                 $tap.close;
@@ -92,33 +160,42 @@ class Audio::StreamThing {
                 }
             }
         });
+        self!debug("returning promise");
         $header-promise;
     }
 
     method !handle-connection(IO::Socket::Async $conn) {
-        say "got connection";
+        self!debug("got connection");
         my $client = self!new-connection($conn).result;
-        say $client.perl;
+        self!debug($client.perl);
         if $client.is-source {
             # TODO check authentication, refuse connect if the mount is in use
-            say "this is a source client";
-            my $supplier = Supplier.new;
-            my $m = $client.uri;
-            %!mounts{$m} = $supplier.Supply;
-            my $stream-supply = $conn.Supply(:bin);
-            $stream-supply.tap(-> $buf {
-                $supplier.emit($buf);
-            }, done => { say "source ending"; %!mounts{$m}:delete });
-            await $conn.write: "HTTP/1.0 200 OK\r\n\r\n".encode;
+            self!debug("this is a source client");
+            my $source = ClientSource.new(connection => $client);
+
+            my $mount = Mount.new(name => $source.uri, :$source);
+            $!mount-create.emit($mount);
         }
         elsif $client.is-client {
             my $m = $client.uri;
             if %!mounts{$m}:exists {
+                my $mount = %!mounts{$m};
+
                 # TODO use the content type and icy-name from the source
-                my $h = HTTP::Header.new(Content-Type => 'audio/mpeg', Pragma => 'no-cache', icy-name => 'foo');
                 my $conn-promise = Promise.new;
-                $conn.Supply(:bin).tap({ say "unexpected content"}, done => { $conn-promise.keep: "done" }, quit => { say "quit" }, closing => { say "closing" });
-                my $write-tap = %!mounts{$m}.tap(-> $buf {
+                my &done = sub {
+                    $conn-promise.keep: "done";
+                }
+                my &emit = sub {
+                    self!debug("unexpected content from client on mount '$m'");
+                }
+                $mount.finished-promise.then({
+                    $conn-promise.keep: "source finished";
+                    $conn.close;
+                });
+
+                $conn.Supply(:bin).tap(&emit, :&done , quit => { say "quit" }, closing => { say "closing" });
+                my $write-tap = $mount.supply.tap(-> $buf {
                     if $conn-promise.status ~~ Planned {
                         $conn.write($buf);
                     }
@@ -126,25 +203,45 @@ class Audio::StreamThing {
                         $write-tap.close;
                     }
                 });
-                await $conn.write( ("HTTP/1.0 200 OK\r\n" ~ $h.Str ~ "\r\n\r\n").encode);
+                my %h = Content-Type => $mount.content-type, Pragma => 'no-cache', icy-name => 'foo';
+                await $client.send-response(200, |%h);
             }
             else {
-                await $conn.write( ("HTTP/1.0 404 Not Found\r\n\r\n").encode);
-                $conn.close;
+                await $client.send-response(404, Content-Type => 'text/plain');
+                $client.close;
             }
         }
         else {
-            my $h = HTTP::Header.new(Content-Type => 'text/plain', Allow => 'SOURCE, GET');
-            await $conn.write( ("HTTP/1.0 405 Method not allowed\r\n" ~ $h.Str ~ "\r\n\r\n").encode);
-            $conn.close;
+            my %h = Content-Type => 'text/plain', Allow => 'SOURCE, GET';
+            await $client.send-response(405, |%h);
+            $client.close;
         }
     }
 
-    method run() {
-        $!connection-supply = IO::Socket::Async.listen('localhost',$!port);
-        $!connection-supply.tap(-> |c { self!handle-connection(|c) });
-        $!connection-supply.wait;
+    method !create-mount(Mount $mount) {
+        self!debug("adding mount { $mount.name }");
+        %!mounts{$mount.name} = $mount;
+        $mount.finished-promise.then({
+            self!debug("deleting mount { $mount.name }");
+            %!mounts{$mount.name}:delete;
+            $!mount-delete.emit($mount);
+        });
+        $mount.start;
+        self!debug("started mount { $mount.name }");
     }
 
+    method run(Bool :$promise) {
+        $!connection-supply = IO::Socket::Async.listen($!host,$!port);
+        my $tap = $!connection-supply.tap(-> |c { self!handle-connection(|c) });
+        $!mount-create-supply.tap( -> |c { self!create-mount(|c) });
+        if $promise {
+            my $p = Promise.new;
+            $p.then({$tap.close });
+            $p;
+        }
+        else {
+            $!connection-supply.wait;
+        }
+    }
 }
 # vim: expandtab shiftwidth=4 ft=perl6
