@@ -1,0 +1,20 @@
+#!perl6
+
+use Audio::Libshout;
+
+multi sub MAIN(Int $port, Str $file, Str $password = 'hackme', Str $mount = '/foo') {
+
+	my $shout = Audio::Libshout.new(:$port, :$password, :$mount, format => Audio::Libshout::Format::MP3);
+	$shout.open;
+	my $fh = $file.IO.open(:bin);
+
+	while not $fh.eof {
+		my $buf = $fh.read(4096);
+		say $buf.elems;
+		$shout.send($buf);
+		$shout.sync;
+	}
+
+	$fh.close;
+	$shout.close;
+}
