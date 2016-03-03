@@ -58,7 +58,7 @@ class Audio::StreamThing {
         multi method send-response(Int $code, Str $body = '', *%headers) {
             my $h = HTTP::Header.new(|%headers);
             my $msg = get_http_status_msg($code);
-            my $out = "HTTP/1.0 $code $msg\r\n$h\r\n$body".encode;
+            my $out = "HTTP/1.0 $code $msg\r\n$h\r\n\r\n$body".encode;
             self.write($out);
         }
 
