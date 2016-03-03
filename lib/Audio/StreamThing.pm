@@ -37,7 +37,26 @@ class Audio::StreamThing {
 
     # TODO: make pluggable
     role Authentication::Basic {
+        need MIME::Base64;
+        has Str $.username;
+        has Str $.password;
 
+        method !decode-tokens() {
+            ($!username, $!password ) = MIME::Base64.decode-str(self.tokens).split(':');
+        }
+
+        method username() returns Str {
+            if !$!username.defined {
+                self!decode-tokens();
+            }
+            $!username;
+        }
+        method password() returns Str {
+            if !$!password.defined {
+                self!decode-tokens();
+            }
+            $!password;
+        }
     }
 
     class ClientConnection {
