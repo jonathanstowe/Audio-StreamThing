@@ -30,6 +30,16 @@ class Audio::StreamThing {
         return -1;
     }
 
+    
+    class Authentication {
+        has Str $.tokens;
+    }
+
+    # TODO: make pluggable
+    role Authentication::Basic {
+
+    }
+
     class ClientConnection {
         has %.environment is required;
         has Blob $.remaining-data;
@@ -45,6 +55,26 @@ class Audio::StreamThing {
 
         method request-method() returns Str {
             %!environment<REQUEST_METHOD>
+        }
+
+        method authentication() returns Authentication {
+            if %!environment<HTTP_AUTHORIZATION> -> $auth {
+                if $auth ~~ /\s*$<scheme>=[\w+]\s+$<tokens>=[.+]$$/ {
+                    my $scheme = $/<scheme>.Str;
+                    my $tokens = $/<tokens>.Str;
+                    if ::("Authentication::$scheme") -> $role {
+                        my $t = Authentication but $role;
+                        $t.new(:$tokens);
+                    }
+                    else {
+                        self!debug("Unknown authentication scheme $scheme");
+                        Authentication;
+                    }
+                }
+            }
+            else {
+                Authentication;
+            }
         }
 
         method uri() returns Str {
@@ -70,6 +100,11 @@ class Audio::StreamThing {
 
         method close() {
             $!connection.close;
+        }
+
+        has Bool $.debug;
+        method !debug(*@message) {
+            $*ERR.say('[',DateTime.now,'][DEBUG] ', @message) if $!debug;
         }
     }
 
