@@ -131,7 +131,8 @@ class Audio::StreamThing {
         has $.message = "incomplete or malformed header in client request";
     }
 
-    role Source {
+    role Portal {
+        has Bool     $.started;
         has Bool     $.debug;
         has Supplier $.supplier         = Supplier.new;
         has Supply   $.supply           = $!supplier.Supply;
@@ -145,8 +146,15 @@ class Audio::StreamThing {
 
     }
 
-    class ClientSource does Source {
+    role Source does Portal {
+    }
+
+
+    role ClientPortal {
         has ClientConnection $.connection is required handles <uri content-type>;
+    }
+
+    class ClientSource does Source does ClientPortal {
         method start() {
             self!debug("source starting");
             my $stream-supply = $!connection.Supply(:bin);
@@ -159,10 +167,46 @@ class Audio::StreamThing {
                 $!supplier.emit($buf);
             }, :&done );
             await $!connection.send-response(200);
+            $!started = True;
         }
         method !debug(*@message) {
             $*ERR.say('[',DateTime.now,'][DEBUG] ', @message) if $!debug;
         }
+    }
+
+    role Output does Portal {
+    }
+
+    class ClientOutput does Output does ClientPortal {
+        method !debug(*@message) {
+            $*ERR.say('[',DateTime.now,'][DEBUG] ', @message) if $!debug;
+        }
+        method start() {
+        # TODO use the content type and icy-name from the source
+            my &done = sub {
+                $!finished-promise.keep: "done";
+            }
+            my &emit = sub {
+                self!debug("unexpected content from client on mount '{ $!connection.url }'");
+            }
+            $!finished-promise.then({
+                $!connection.close;
+            });
+
+            $!connection.Supply(:bin).tap(&emit, :&done , quit => { say "quit" }, closing => { say "closing" });
+            my $write-tap = self.supply.tap(-> $buf {
+                if $!finished-promise.status ~~ Planned {
+                    $!connection.write($buf);
+                }
+                else {
+                    $write-tap.close;
+                }
+            });
+            my %h = Content-Type => $!content-type, Pragma => 'no-cache', icy-name => 'foo';
+            await self.connection.send-response(200, |%h);
+            $!started = True
+        }
+
     }
 
     
@@ -170,12 +214,36 @@ class Audio::StreamThing {
     class Mount {
         has Str    $.name;
         has Source $.source handles <supply content-type bytes-sent>;
+        has Output %!outputs;
+        has Promise $.finished-promise;
 
         method finished-promise() returns Promise {
-            my $p = Promise.new;
-            my $v = $p.vow;
-            $.source.finished-promise.then({ $v.keep: "source closed" });
-            $p;
+            if !$!finished-promise.defined {
+                my $p = Promise.new;
+                my $v = $p.vow;
+                $.source.finished-promise.then({ $v.keep: "source closed" });
+                $!finished-promise = $p;
+            }
+            $!finished-promise;
+        }
+
+        method outputs() {
+            %!outputs.values;
+        }
+
+        method add-output(Output $output ) {
+            my $which = $output.WHICH;
+            %!outputs{$which} =  $output;
+            self.supply.tap( -> $buf {
+                $output.supplier.emit($buf);
+            });
+            $output.finished-promise.then({
+                %!outputs{$which}:delete;
+            });
+            self.finished-promise.then({
+                $output.finished-promise.keep: "mount closed";
+            });
+            $output.start;
         }
 
         method start() {
@@ -234,31 +302,11 @@ class Audio::StreamThing {
             my $m = $client.uri;
             if %!mounts{$m}:exists {
                 my $mount = %!mounts{$m};
+                self!debug("starting client output on $m");
 
-                # TODO use the content type and icy-name from the source
-                my $conn-promise = Promise.new;
-                my &done = sub {
-                    $conn-promise.keep: "done";
-                }
-                my &emit = sub {
-                    self!debug("unexpected content from client on mount '$m'");
-                }
-                $mount.finished-promise.then({
-                    $conn-promise.keep: "source finished";
-                    $conn.close;
-                });
+                my $output = ClientOutput.new(connection => $client, content-type => $mount.content-type);
+                $mount.add-output($output);
 
-                $conn.Supply(:bin).tap(&emit, :&done , quit => { say "quit" }, closing => { say "closing" });
-                my $write-tap = $mount.supply.tap(-> $buf {
-                    if $conn-promise.status ~~ Planned {
-                        $conn.write($buf);
-                    }
-                    else {
-                        $write-tap.close;
-                    }
-                });
-                my %h = Content-Type => $mount.content-type, Pragma => 'no-cache', icy-name => 'foo';
-                await $client.send-response(200, |%h);
             }
             else {
                 await $client.send-response(404, Content-Type => 'text/plain');
