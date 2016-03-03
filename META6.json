@@ -1,0 +1,28 @@
+{
+   "tags" : ["audio", "stream", "server", "icecast"],
+   "build-depends" : [],
+   "source-url" : "git://github.com/jonathanstowe/Audio-StreamThing.git",
+   "license" : "perl",
+   "authors" : [
+      "Jonathan Stowe <jns+gh@gellyfish.co.uk>"
+   ],
+   "meta6" : "0",
+   "test-depends" : [],
+   "perl" : "6.c",
+   "auth" : null,
+   "resource" : {},
+   "name" : "Audio::StreamThing",
+   "depends" : [
+		"HTTP::Parser",
+		"HTTP::Status",
+      "MIME::Base64",
+      "HTTP::UserAgent",
+      "Audio::Libshout"
+   ],
+   "support" : {
+      "source" : "git://github.com/jonathanstowe/Audio-StreamThing.git"
+   },
+   "description" : "An audio streaming server framework",
+   "version" : "0.0.1",
+   "provides" : {}
+}
