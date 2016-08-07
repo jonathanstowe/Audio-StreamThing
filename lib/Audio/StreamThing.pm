@@ -1,5 +1,9 @@
 use v6;
 
+=begin pod
+
+=end pod
+
 use HTTP::Parser;
 use HTTP::Header;
 use HTTP::Status;
@@ -212,10 +216,11 @@ class Audio::StreamThing {
     
 
     class Mount {
-        has Str    $.name;
-        has Source $.source handles <supply content-type bytes-sent>;
-        has Output %!outputs;
+        has Str     $.name;
+        has Source  $.source handles <supply content-type bytes-sent>;
+        has Output  %!outputs;
         has Promise $.finished-promise;
+        has Bool    $.transient = True;
 
         method finished-promise() returns Promise {
             if !$!finished-promise.defined {
