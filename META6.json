@@ -7,9 +7,9 @@
       "Jonathan Stowe <jns+gh@gellyfish.co.uk>"
    ],
    "meta6" : "0",
-   "test-depends" : [],
+   "test-depends" : [ "Audio::Libshout" ],
    "perl" : "6.c",
-   "auth" : null,
+   "auth" : "github:jonathanstowe",
    "resource" : {},
    "name" : "Audio::StreamThing",
    "depends" : [
@@ -24,5 +24,7 @@
    },
    "description" : "An audio streaming server framework",
    "version" : "0.0.1",
-   "provides" : {}
+   "provides" : {
+		"Audio::StreamThing" : "lib/Audio/StreamThing.pm"
+   }
 }
