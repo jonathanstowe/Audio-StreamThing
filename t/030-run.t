@@ -10,9 +10,11 @@ use Audio::Libshout;
 
 my $port = get-unused-port();
 
+my Bool $debug = True;
+
 
 my $obj;
-lives-ok  { $obj = Audio::StreamThing.new(:$port); }, "create one on port $port";
+lives-ok  { $obj = Audio::StreamThing.new(:$port, :$debug); }, "create one on port $port";
 
 my $password = 'hackme';
 my $mount = '/mount';
