@@ -15,6 +15,7 @@
    "depends" : [
 		"HTTP::Parser",
 		"HTTP::Status",
+		"HTTP::Server::Tiny",
       "MIME::Base64",
       "HTTP::UserAgent",
       "Audio::Libshout"
