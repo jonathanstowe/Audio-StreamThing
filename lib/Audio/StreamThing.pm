@@ -7,12 +7,21 @@ use v6;
 use HTTP::Parser;
 use HTTP::Header;
 use HTTP::Status;
+use HTTP::Server::Tiny;
 
 class Audio::StreamThing {
 
     has Bool $.debug;
     has Int $.port is required;
     has Str $.host = '0.0.0.0';
+    has HTTP::Server::Tiny $!http-server; # Maybe something else;
+
+    method http-server() is rw returns HTTP::Server::Tiny {
+        if not $!http-server.defined {
+            $!http-server = HTTP::Server::Tiny.new(:$!host, :$!port);
+        }
+        $!http-server;
+    }
 
     has %!mounts;
     has Supply $!connection-supply;
