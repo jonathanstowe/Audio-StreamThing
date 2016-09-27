@@ -189,7 +189,6 @@ class Audio::StreamThing {
                 $!finished-promise.keep: "source ending";
             }
             $stream-supply.tap(-> $buf {
-                self!debug("received " ~ $buf.elems);
                 $!bytes-sent += $buf.elems;
                 $!supplier.emit($buf);
             }, :&done );
@@ -208,6 +207,7 @@ class Audio::StreamThing {
             $*ERR.say('[',DateTime.now,'][DEBUG] ', @message) if $!debug;
         }
         method start() {
+            self!debug("starting output");
         # TODO use the content type and icy-name from the source
             my &done = sub {
                 $!finished-promise.keep: "done";
@@ -216,21 +216,12 @@ class Audio::StreamThing {
                 self!debug("unexpected content from client on mount '{ $!connection.url }'");
             }
             $!finished-promise.then({
-                $!connection.close;
+                self.supplier.quit;
             });
 
             $!connection.Supply(:bin).tap(&emit, :&done , quit => { say "quit" }, closing => { say "closing" });
-            my $write-tap = self.supply.tap(-> $buf {
-                if $!finished-promise.status ~~ Planned {
-                    $!connection.write($buf);
-                }
-                else {
-                    $write-tap.close;
-                }
-            });
-            my %h = Content-Type => $!content-type, Pragma => 'no-cache', icy-name => 'foo';
-            await self.connection.send-response(200, |%h);
-            $!started = True
+            $!started = True;
+            return 200, [ Content-Type => $!content-type, Pragma => 'no-cache', icy-name => 'foo'], self.supply;
         }
 
     }
@@ -270,7 +261,7 @@ class Audio::StreamThing {
             self.finished-promise.then({
                 $output.finished-promise.keep: "mount closed";
             });
-            $output.start;
+            return $output.start;
         }
 
         method start() {
@@ -338,7 +329,7 @@ class Audio::StreamThing {
                     self!debug("starting client output on $m");
 
                     my $output = ClientOutput.new(connection => $client, content-type => $mount.content-type, :$!debug);
-                    $mount.add-output($output);
+                    return $mount.add-output($output);
 
                 }
                 else {
