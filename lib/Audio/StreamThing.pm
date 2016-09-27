@@ -294,8 +294,10 @@ class Audio::StreamThing {
         has Supplier $!mount-delete;
         has Supply   $.mount-delete-supply;
 
-        method CALL-ME(Server:D: %env) {
-
+        method CALL-ME(Server:D: $environment) {
+            my $connection = $environment<p6sgix.io>;
+            my $client = ClientConnection.new(:$environment, :$connection);
+            self!handle-connection($client);
         }
 
         method !create-mount(Mount $mount) {
@@ -315,37 +317,9 @@ class Audio::StreamThing {
         }
 
 
-        method !new-connection(IO::Socket::Async $conn) returns Promise {
-            self!debug( "new connection");
-            my Buf $in-buf = Buf.new;
-            my $header-promise = Promise.new;
-            self!debug("got promise");
-            my $in-supply = $conn.Supply(:bin);
-            self!debug("got supply");
-            my $tap = $in-supply.act( -> $buf { 
-                self!debug("got stuff");
-                $in-buf ~= $buf;
-                if (my $header-end = index-buf($in-buf, Buf.new(13,10,13,10))) > 0 {
-                    self!debug("got header");
-                    my $header = $in-buf.subbuf(0, $header-end + 4);
-                    my $env = parse-http-request($header);
-                    $tap.close;
-                    if $env[0] >= 0 {
-                        my $remaining-data = $in-buf.subbuf($header-end + 4);
-                        $header-promise.keep: ClientConnection.new(environment => $env[1], :$remaining-data, connection => $conn);
-                    }
-                    else {
-                        X::BadHeader.new.throw;
-                    }
-                }
-            });
-            self!debug("returning promise");
-            $header-promise;
-        }
 
-        method !handle-connection(IO::Socket::Async $conn) {
+        method !handle-connection(ClientConnection $client) {
             self!debug("got connection");
-            my $client = self!new-connection($conn).result;
             self!debug($client.perl);
             if $client.is-source {
                 # TODO check authentication, refuse connect if the mount is in use
@@ -356,6 +330,7 @@ class Audio::StreamThing {
                 $!mount-create.emit($mount);
             }
             elsif $client.is-client {
+                self!debug("This is a client");
                 my $m = $client.uri;
                 if %!mounts{$m}:exists {
                     my $mount = %!mounts{$m};
@@ -366,14 +341,13 @@ class Audio::StreamThing {
 
                 }
                 else {
-                    await $client.send-response(404, Content-Type => 'text/plain');
-                    $client.close;
+                    self!debug("Not a valid mount");
+                    return 404, [Content-Type => 'text/plain'], ["Mount does not exist"];
                 }
             }
             else {
-                my %h = Content-Type => 'text/plain', Allow => 'SOURCE, GET';
-                await $client.send-response(405, |%h);
-                $client.close;
+                self!debug("Unhandled request");
+                return 405, [Content-Type => 'text/plain', Allow => 'SOURCE, GET'], ["Bad request"];
             }
         }
 
