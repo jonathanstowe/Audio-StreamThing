@@ -44,14 +44,6 @@ class Audio::StreamThing {
         $!http-server;
     }
 
-    has %!mounts;
-    has Supply $!connection-supply;
-
-    has Supplier $!mount-create = Supplier.new;
-    has Supply   $.mount-create-supply = $!mount-create.Supply;
-
-    has Supplier $!mount-delete = Supplier.new;
-    has Supply   $.mount-delete-supply = $!mount-delete.Supply;
 
     sub index-buf(Blob $input, Blob $sub) returns Int {
         my $end-pos = 0;
@@ -288,96 +280,131 @@ class Audio::StreamThing {
 
     }
 
-    method !debug(*@message) {
-        $*ERR.say('[',DateTime.now,'][DEBUG] ', @message) if $!debug;
-    }
 
 
-    method !new-connection(IO::Socket::Async $conn) returns Promise {
-        self!debug( "new connection");
-        my Buf $in-buf = Buf.new;
-        my $header-promise = Promise.new;
-        self!debug("got promise");
-        my $in-supply = $conn.Supply(:bin);
-        self!debug("got supply");
-        my $tap = $in-supply.act( -> $buf { 
-            self!debug("got stuff");
-            $in-buf ~= $buf;
-            if (my $header-end = index-buf($in-buf, Buf.new(13,10,13,10))) > 0 {
-                self!debug("got header");
-                my $header = $in-buf.subbuf(0, $header-end + 4);
-                my $env = parse-http-request($header);
-                $tap.close;
-                if $env[0] >= 0 {
-                    my $remaining-data = $in-buf.subbuf($header-end + 4);
-                    $header-promise.keep: ClientConnection.new(environment => $env[1], :$remaining-data, connection => $conn);
+    class Server does Callable {
+        has Bool $.debug;
+
+        has %!mounts;
+        has Supply $!connection-supply;
+
+        has Supplier $!mount-create;
+        has Supply   $.mount-create-supply;
+
+        has Supplier $!mount-delete;
+        has Supply   $.mount-delete-supply;
+
+        method CALL-ME(Server:D: %env) {
+
+        }
+
+        method !create-mount(Mount $mount) {
+            self!debug("adding mount { $mount.name }");
+            %!mounts{$mount.name} = $mount;
+            $mount.finished-promise.then({
+                self!debug("deleting mount { $mount.name }");
+                %!mounts{$mount.name}:delete;
+                $!mount-delete.emit($mount);
+            });
+            $mount.start;
+            self!debug("started mount { $mount.name }");
+        }
+
+        method !debug(*@message) {
+            $*ERR.say('[',DateTime.now,'][DEBUG] ', @message) if $!debug;
+        }
+
+
+        method !new-connection(IO::Socket::Async $conn) returns Promise {
+            self!debug( "new connection");
+            my Buf $in-buf = Buf.new;
+            my $header-promise = Promise.new;
+            self!debug("got promise");
+            my $in-supply = $conn.Supply(:bin);
+            self!debug("got supply");
+            my $tap = $in-supply.act( -> $buf { 
+                self!debug("got stuff");
+                $in-buf ~= $buf;
+                if (my $header-end = index-buf($in-buf, Buf.new(13,10,13,10))) > 0 {
+                    self!debug("got header");
+                    my $header = $in-buf.subbuf(0, $header-end + 4);
+                    my $env = parse-http-request($header);
+                    $tap.close;
+                    if $env[0] >= 0 {
+                        my $remaining-data = $in-buf.subbuf($header-end + 4);
+                        $header-promise.keep: ClientConnection.new(environment => $env[1], :$remaining-data, connection => $conn);
+                    }
+                    else {
+                        X::BadHeader.new.throw;
+                    }
+                }
+            });
+            self!debug("returning promise");
+            $header-promise;
+        }
+
+        method !handle-connection(IO::Socket::Async $conn) {
+            self!debug("got connection");
+            my $client = self!new-connection($conn).result;
+            self!debug($client.perl);
+            if $client.is-source {
+                # TODO check authentication, refuse connect if the mount is in use
+                self!debug("this is a source client");
+                my $source = ClientSource.new(connection => $client);
+
+                my $mount = Mount.new(name => $source.uri, :$source);
+                $!mount-create.emit($mount);
+            }
+            elsif $client.is-client {
+                my $m = $client.uri;
+                if %!mounts{$m}:exists {
+                    my $mount = %!mounts{$m};
+                    self!debug("starting client output on $m");
+
+                    my $output = ClientOutput.new(connection => $client, content-type => $mount.content-type);
+                    $mount.add-output($output);
+
                 }
                 else {
-                    X::BadHeader.new.throw;
+                    await $client.send-response(404, Content-Type => 'text/plain');
+                    $client.close;
                 }
             }
-        });
-        self!debug("returning promise");
-        $header-promise;
-    }
-
-    method !handle-connection(IO::Socket::Async $conn) {
-        self!debug("got connection");
-        my $client = self!new-connection($conn).result;
-        self!debug($client.perl);
-        if $client.is-source {
-            # TODO check authentication, refuse connect if the mount is in use
-            self!debug("this is a source client");
-            my $source = ClientSource.new(connection => $client);
-
-            my $mount = Mount.new(name => $source.uri, :$source);
-            $!mount-create.emit($mount);
-        }
-        elsif $client.is-client {
-            my $m = $client.uri;
-            if %!mounts{$m}:exists {
-                my $mount = %!mounts{$m};
-                self!debug("starting client output on $m");
-
-                my $output = ClientOutput.new(connection => $client, content-type => $mount.content-type);
-                $mount.add-output($output);
-
-            }
             else {
-                await $client.send-response(404, Content-Type => 'text/plain');
+                my %h = Content-Type => 'text/plain', Allow => 'SOURCE, GET';
+                await $client.send-response(405, |%h);
                 $client.close;
             }
         }
-        else {
-            my %h = Content-Type => 'text/plain', Allow => 'SOURCE, GET';
-            await $client.send-response(405, |%h);
-            $client.close;
+
+        submethod BUILD(:$!debug) {
+            $!mount-create = Supplier.new;
+            $!mount-create-supply = $!mount-create.Supply;
+
+            $!mount-delete = Supplier.new;
+            $!mount-delete-supply = $!mount-delete.Supply;
+
+            $!mount-create-supply.tap( -> |c { self!create-mount(|c) });
         }
     }
 
-    method !create-mount(Mount $mount) {
-        self!debug("adding mount { $mount.name }");
-        %!mounts{$mount.name} = $mount;
-        $mount.finished-promise.then({
-            self!debug("deleting mount { $mount.name }");
-            %!mounts{$mount.name}:delete;
-            $!mount-delete.emit($mount);
-        });
-        $mount.start;
-        self!debug("started mount { $mount.name }");
+    has Server $!server;
+
+    method server() is rw returns Server {
+        if ! $!server.defined {
+            $!server = Server.new(:$!debug);
+        }
+        $!server;
     }
 
     method run(Bool :$promise) {
-        $!connection-supply = IO::Socket::Async.listen($!host,$!port);
-        my $tap = $!connection-supply.tap(-> |c { self!handle-connection(|c) });
-        $!mount-create-supply.tap( -> |c { self!create-mount(|c) });
         if $promise {
-            my $p = Promise.new;
-            $p.then({$tap.close });
-            $p;
+            my $control-promise = Promise.new;
+            start { self.http-server.run(self.server, :$control-promise) };
+            $control-promise;
         }
         else {
-            $!connection-supply.wait;
+            self.http-server.run(self.server);
         }
     }
 }
