@@ -2,6 +2,27 @@ use v6;
 
 =begin pod
 
+=head1 NAME
+
+Audio::StreamThing - An Experimental Audio Streaming Server
+
+=head1 SYNOPSIS
+
+=begin code
+
+use Audio::StreamThing;
+
+my $server = Audio::StreamThing.new(port => 8898);
+
+$server.run;
+
+=end code
+
+=head1 DESCRIPTION
+
+=head1 METHODS
+
+
 =end pod
 
 use HTTP::Parser;
