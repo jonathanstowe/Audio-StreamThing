@@ -189,10 +189,10 @@ class Audio::StreamThing {
                 $!finished-promise.keep: "source ending";
             }
             $stream-supply.tap(-> $buf {
+                self!debug("received " ~ $buf.elems);
                 $!bytes-sent += $buf.elems;
                 $!supplier.emit($buf);
             }, :&done );
-            await $!connection.send-response(200);
             $!started = True;
         }
         method !debug(*@message) {
@@ -324,10 +324,11 @@ class Audio::StreamThing {
             if $client.is-source {
                 # TODO check authentication, refuse connect if the mount is in use
                 self!debug("this is a source client");
-                my $source = ClientSource.new(connection => $client);
+                my $source = ClientSource.new(connection => $client, :$!debug);
 
-                my $mount = Mount.new(name => $source.uri, :$source);
+                my $mount = Mount.new(name => $source.uri, :$source, :$!debug);
                 $!mount-create.emit($mount);
+                return 200, [ Content-Type => $mount.content-type ], supply { whenever $source.finished-promise { done; } };
             }
             elsif $client.is-client {
                 self!debug("This is a client");
@@ -336,7 +337,7 @@ class Audio::StreamThing {
                     my $mount = %!mounts{$m};
                     self!debug("starting client output on $m");
 
-                    my $output = ClientOutput.new(connection => $client, content-type => $mount.content-type);
+                    my $output = ClientOutput.new(connection => $client, content-type => $mount.content-type, :$!debug);
                     $mount.add-output($output);
 
                 }
