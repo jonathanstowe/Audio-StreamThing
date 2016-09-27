@@ -20,14 +20,14 @@ my $password = 'hackme';
 my $mount = '/mount';
 my Int $byte-count = 0;
 
-my $tap-create = $obj.mount-create-supply.tap( -> $m { 
+my $tap-create = $obj.server.mount-create-supply.tap( -> $m { 
     isa-ok $m, Audio::StreamThing::Mount, "got a Mount object (for create)";
     is $m.name, $mount, "and it is the mount we expected ( for create )";
     $tap-create.close;
 });
 my $delete-promise = Promise.new;
 
-my $tap-delete = $obj.mount-delete-supply.tap( -> $m { 
+my $tap-delete = $obj.server.mount-delete-supply.tap( -> $m { 
     isa-ok $m, Audio::StreamThing::Mount, "got a Mount object (for delete)";
     is $m.name, $mount, "and it is the mount we expected ( for delete )";
     is $byte-count, $m.bytes-sent, "and we sent what we expected";
