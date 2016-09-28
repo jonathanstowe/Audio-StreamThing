@@ -200,6 +200,7 @@ class Audio::StreamThing {
     }
 
     role Output does Portal {
+        has Channel $.channel = Channel.new;
     }
 
     class ClientOutput does Output does ClientPortal {
@@ -216,12 +217,12 @@ class Audio::StreamThing {
                 self!debug("unexpected content from client on mount '{ $!connection.url }'");
             }
             $!finished-promise.then({
-                self.supplier.quit;
+                self.channel.close;
             });
 
             $!connection.Supply(:bin).tap(&emit, :&done , quit => { say "quit" }, closing => { say "closing" });
             $!started = True;
-            return 200, [ Content-Type => $!content-type, Pragma => 'no-cache', icy-name => 'foo'], self.supply;
+            return 200, [ Content-Type => $!content-type, Pragma => 'no-cache', icy-name => 'foo'], self.channel;
         }
 
     }
@@ -253,7 +254,7 @@ class Audio::StreamThing {
             my $which = $output.WHICH;
             %!outputs{$which} =  $output;
             self.supply.tap( -> $buf {
-                $output.supplier.emit($buf);
+                $output.channel.send($buf);
             });
             $output.finished-promise.then({
                 %!outputs{$which}:delete;
