@@ -254,7 +254,9 @@ class Audio::StreamThing {
             my $which = $output.WHICH;
             %!outputs{$which} =  $output;
             self.supply.tap( -> $buf {
-                $output.channel.send($buf);
+                if !$output.finished-promise {
+                    $output.channel.send($buf);
+                }
             });
             $output.finished-promise.then({
                 %!outputs{$which}:delete;
