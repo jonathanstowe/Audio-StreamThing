@@ -211,6 +211,7 @@ class Audio::StreamThing {
             self!debug("starting output");
         # TODO use the content type and icy-name from the source
             my &done = sub {
+                self!debug("output disconnected");
                 $!finished-promise.keep: "done";
             }
             my &emit = sub {
@@ -235,6 +236,7 @@ class Audio::StreamThing {
         has Output  %!outputs;
         has Promise $.finished-promise;
         has Bool    $.transient = True;
+        has Bool    $.debug;
 
         method finished-promise() returns Promise {
             if !$!finished-promise.defined {
@@ -259,6 +261,7 @@ class Audio::StreamThing {
                 }
             });
             $output.finished-promise.then({
+                self!debug("removing output");
                 %!outputs{$which}:delete;
             });
             self.finished-promise.then({
@@ -269,6 +272,10 @@ class Audio::StreamThing {
 
         method start() {
             $!source.start;
+        }
+
+        method !debug(*@message) {
+            $*ERR.say('[',DateTime.now,'][DEBUG] ', @message) if $!debug;
         }
 
 
