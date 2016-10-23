@@ -7,7 +7,7 @@
       "Jonathan Stowe <jns+gh@gellyfish.co.uk>"
    ],
    "meta6" : "0",
-   "test-depends" : [ "Audio::Libshout" ],
+   "test-depends" : [ "Audio::Libshout", "Test::Util::ServerPort" ],
    "perl" : "6.c",
    "auth" : "github:jonathanstowe",
    "resource" : {},
