@@ -2,9 +2,11 @@
 
 A very rudimentary and experimental audio streaming server.
 
+[![Build Status](https://travis-ci.org/jonathanstowe/Audio-StreamThing.svg?branch=master)](https://travis-ci.org/jonathanstowe/Audio-StreamThing)
+
 ## Synopsis
 
-```
+```perl6
 use Audio::StreamThing;
 
 my $server = Audio::StreamThing.new(port => 8898);
