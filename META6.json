@@ -13,9 +13,9 @@
    "resource" : {},
    "name" : "Audio::StreamThing",
    "depends" : [
-		"HTTP::Parser",
-		"HTTP::Status",
-		"HTTP::Server::Tiny",
+      "HTTP::Parser",
+      "HTTP::Status",
+      "HTTP::Server::Tiny",
       "MIME::Base64",
       "HTTP::UserAgent",
       "Audio::Libshout"
@@ -26,6 +26,6 @@
    "description" : "An audio streaming server framework",
    "version" : "0.0.1",
    "provides" : {
-		"Audio::StreamThing" : "lib/Audio/StreamThing.pm"
+        "Audio::StreamThing" : "lib/Audio/StreamThing.pm"
    }
 }
