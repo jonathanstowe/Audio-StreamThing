@@ -45,18 +45,6 @@ class Audio::StreamThing {
     }
 
 
-    sub index-buf(Blob $input, Blob $sub) returns Int {
-        my $end-pos = 0;
-        while $end-pos < $input.bytes {
-            if $sub eq $input.subbuf($end-pos, $sub.bytes) {
-                return $end-pos;
-            }
-            $end-pos++;
-        }
-        return -1;
-    }
-
-    
     class Authentication {
         has Str $.tokens;
     }
