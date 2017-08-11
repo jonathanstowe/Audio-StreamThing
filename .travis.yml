@@ -7,5 +7,5 @@ perl6:
 
 install:
     - sudo apt-get install libshout3
-    - rakudobrew build-panda
-    - panda installdeps --notests .
+    - rakudobrew build-zef
+    - zef --deps-only --/test install .
