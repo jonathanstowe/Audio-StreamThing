@@ -284,7 +284,7 @@ class Audio::StreamThing {
         has Supply   $.mount-delete-supply;
 
         method CALL-ME(Server:D: $environment) {
-            my $connection = $environment<p6sgix.io>;
+            my $connection = $environment<p6wx.io>;
             my $client = ClientConnection.new(:$environment, :$connection);
             self!handle-connection($client);
         }
